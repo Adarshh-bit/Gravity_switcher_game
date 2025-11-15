@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Gravity Switcher - Epic Adventure</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: manipulation;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #gameContainer {
+            position: relative;
+            max-width: 100vw;
+            max-height: 100vh;
+            background: #000;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%);
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            pointer-events: none;
+        }
+
+        .control-btn {
+            pointer-events: all;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            color: white;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        .control-btn:active {
+            transform: scale(0.9);
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        #gravityBtn {
+            width: 90px;
+            height: 90px;
+            font-size: 40px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border: 4px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        #gravityBtn:active {
+            box-shadow: 0 3px 10px rgba(245, 87, 108, 0.6);
+        }
+
+        .arrow-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        @media (max-width: 600px) {
+            #gameContainer {
+                border-radius: 0;
+                width: 100vw;
+                height: 100vh;
+            }
+        }
+
+        @media (min-width: 601px) {
+            #gameContainer {
+                width: 800px;
+                height: 600px;
+            }
+            #controls {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="controls">
+            <div class="arrow-group">
+                <div class="control-btn" id="leftBtn">◀</div>
+                <div class="control-btn" id="rightBtn">▶</div>
+            </div>
+            <div class="control-btn" id="gravityBtn">⚡</div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        function resizeCanvas() {
+            const container = document.getElementById('gameContainer');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Game constants
+        const GRAVITY = 0.5;
+        const PLAYER_SPEED = 5;
+
+        // Input handling
+        const keys = {};
+        const touches = {left: false, right: false};
+
+        document.addEventListener('keydown', (e) => keys[e.key] = true);
+        document.addEventListener('keyup', (e) => keys[e.key] = false);
+
+        // Touch controls
+        document.getElementById('leftBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touches.left = true;
+        });
+        document.getElementById('leftBtn').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touches.left = false;
+        });
+
+        document.getElementById('rightBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touches.right = true;
+        });
+        document.getElementById('rightBtn').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touches.right = false;
+        });
+
+        document.getElementById('gravityBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameState === 'playing') {
+                flipGravity();
+            }
+        });
+
+        // Particle system
+        const particles = [];
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = (Math.random() - 0.5) * 4;
+                this.life = 1;
+                this.color = color;
+                this.size = Math.random() * 4 + 2;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.02;
+                this.vy += 0.1;
+            }
+            draw() {
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Classes
+        class MovingPlatform {
+            constructor(x, y, width, height, moveRange, speed, direction) {
+                this.x = x;
+                this.y = y;
+                this.startX = x;
+                this.startY = y;
+                this.width = width;
+                this.height = height;
+                this.moveRange = moveRange;
+                this.speed = speed;
+                this.direction = direction;
+                this.counter = 0;
+            }
+
+            update() {
+                this.counter += this.speed * 0.02;
+                if (this.direction === 'horizontal') {
+                    this.x = this.startX + Math.sin(this.counter) * this.moveRange;
+                } else {
+                    this.y = this.startY + Math.sin(this.counter) * this.moveRange;
+                }
+            }
+
+            draw() {
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = 'rgba(100, 150, 255, 0.5)';
+                ctx.fillStyle = '#6495ed';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.shadowBlur = 0;
+                
+                // Glow effect
+                const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.height);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(this.x, this.y, this.width, this.height / 2);
+            }
+
+            getRect() {
+                return { x: this.x, y: this.y, width: this.width, height: this.height };
+            }
+        }
+
+        class Collectible {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.collected = false;
+                this.rotation = 0;
+                this.pulse = 0;
+            }
+
+            update() {
+                this.rotation += 0.05;
+                this.pulse = Math.sin(Date.now() * 0.005) * 5;
+            }
+
+            draw() {
+                if (this.collected) return;
+
+                ctx.save();
+                ctx.translate(this.x, this.y + this.pulse);
+                ctx.rotate(this.rotation);
+
+                if (this.type === 'star') {
+                    this.drawStar(0, 0, 5, 15, 7);
+                } else if (this.type === 'coin') {
+                    this.drawCoin(0, 0, 12);
+                } else if (this.type === 'gem') {
+                    this.drawGem(0, 0);
+                }
+
+                ctx.restore();
+            }
+
+            drawStar(cx, cy, spikes, outerRadius, innerRadius) {
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#ffeb3b';
+                ctx.fillStyle = '#ffeb3b';
+                ctx.beginPath();
+                for (let i = 0; i < spikes * 2; i++) {
+                    const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                    const angle = (i * Math.PI) / spikes - Math.PI / 2;
+                    const x = cx + Math.cos(angle) * radius;
+                    const y = cy + Math.sin(angle) * radius;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            drawCoin(cx, cy, radius) {
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#ffd700';
+                const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+                gradient.addColorStop(0, '#ffd700');
+                gradient.addColorStop(1, '#ff8c00');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            drawGem(cx, cy) {
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#e91e63';
+                const gradient = ctx.createLinearGradient(cx - 10, cy - 10, cx + 10, cy + 10);
+                gradient.addColorStop(0, '#e91e63');
+                gradient.addColorStop(1, '#9c27b0');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy - 12);
+                ctx.lineTo(cx + 10, cy);
+                ctx.lineTo(cx, cy + 12);
+                ctx.lineTo(cx - 10, cy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            getRect() {
+                return { x: this.x - 15, y: this.y - 15, width: 30, height: 30 };
+            }
+        }
+
+        // Game state
+        let gameState = 'playing';
+        let score = 0;
+        let collectedItems = 0;
+        let currentGravity = GRAVITY;
+        let playerVelocityY = 0;
+
+        // Scale factor for responsive design
+        function scale(value) {
+            return value * (canvas.width / 800);
+        }
+
+        // Player
+        let player = {
+            x: scale(50),
+            y: scale(250),
+            width: scale(40),
+            height: scale(40),
+            trail: []
+        };
+
+        // Initialize game objects
+        let movingPlatforms = [];
+        let collectibles = [];
+        let staticPlatforms = [];
+        let spikes = [];
+        let goal = {};
+
+        function resetGame() {
+            const s = canvas.width / 800;
+            
+            player = {
+                x: scale(50),
+                y: scale(250),
+                width: scale(40),
+                height: scale(40),
+                trail: []
+            };
+            
+            playerVelocityY = 0;
+            currentGravity = GRAVITY * s;
+            collectedItems = 0;
+            particles.length = 0;
+
+            movingPlatforms = [
+                new MovingPlatform(scale(300), scale(400), scale(100), scale(20), scale(100), 2, 'horizontal'),
+                new MovingPlatform(scale(500), scale(300), scale(100), scale(20), scale(80), 3, 'vertical'),
+                new MovingPlatform(scale(200), scale(200), scale(100), scale(20), scale(120), 1.5, 'horizontal'),
+            ];
+
+            collectibles = [
+                new Collectible(scale(150), scale(450), 'star'),
+                new Collectible(scale(350), scale(350), 'coin'),
+                new Collectible(scale(550), scale(250), 'gem'),
+                new Collectible(scale(250), scale(150), 'star'),
+                new Collectible(scale(450), scale(80), 'coin'),
+            ];
+
+            staticPlatforms = [
+                { x: 0, y: scale(500), width: scale(300), height: scale(20) },
+                { x: scale(500), y: scale(500), width: scale(300), height: scale(20) },
+                { x: scale(100), y: scale(350), width: scale(80), height: scale(20) },
+                { x: scale(400), y: scale(450), width: scale(80), height: scale(20) },
+                { x: scale(600), y: scale(150), width: scale(80), height: scale(20) },
+            ];
+
+            spikes = [
+                { x: scale(350), y: scale(480), width: scale(50), height: scale(20) },
+                { x: scale(200), y: scale(330), width: scale(50), height: scale(20) },
+            ];
+
+            goal = { x: scale(700), y: scale(100), width: scale(50), height: scale(50) };
+        }
+
+        function flipGravity() {
+            currentGravity = -currentGravity;
+            // Visual feedback
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(
+                    player.x + player.width / 2,
+                    player.y + player.height / 2,
+                    currentGravity > 0 ? '#ff6b6b' : '#4ecdc4'
+                ));
+            }
+        }
+
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        function update() {
+            if (gameState !== 'playing') return;
+
+            // Update moving platforms
+            movingPlatforms.forEach(p => p.update());
+
+            // Update collectibles
+            collectibles.forEach(c => c.update());
+
+            // Player physics
+            playerVelocityY += currentGravity;
+            player.y += playerVelocityY;
+
+            // Horizontal movement
+            if (keys['ArrowLeft'] || keys['a'] || touches.left) {
+                player.x -= PLAYER_SPEED * (canvas.width / 800);
+            }
+            if (keys['ArrowRight'] || keys['d'] || touches.right) {
+                player.x += PLAYER_SPEED * (canvas.width / 800);
+            }
+
+            // Gravity flip
+            if (keys[' '] && gameState === 'playing') {
+                flipGravity();
+                keys[' '] = false;
+            }
+
+            // Platform collision
+            const allPlatforms = [...staticPlatforms, ...movingPlatforms.map(p => p.getRect())];
+            allPlatforms.forEach(platform => {
+                if (checkCollision(player, platform)) {
+                    if (currentGravity > 0 && playerVelocityY > 0) {
+                        player.y = platform.y - player.height;
+                        playerVelocityY = 0;
+                    } else if (currentGravity < 0 && playerVelocityY < 0) {
+                        player.y = platform.y + platform.height;
+                        playerVelocityY = 0;
+                    }
+                }
+            });
+
+            // Collectible collision
+            collectibles.forEach(c => {
+                if (!c.collected && checkCollision(player, c.getRect())) {
+                    c.collected = true;
+                    collectedItems++;
+                    score += 10;
+                    // Particle effect
+                    for (let i = 0; i < 15; i++) {
+                        particles.push(new Particle(c.x, c.y, '#ffeb3b'));
+                    }
+                }
+            });
+
+            // Spike collision
+            spikes.forEach(spike => {
+                if (checkCollision(player, spike)) {
+                    gameState = 'failed';
+                }
+            });
+
+            // Boundaries
+            if (player.y > canvas.height || player.y + player.height < 0) {
+                gameState = 'failed';
+            }
+            player.x = Math.max(0, Math.min(player.x, canvas.width - player.width));
+
+            // Goal check
+            if (checkCollision(player, goal)) {
+                if (collectedItems === collectibles.length) {
+                    score += 50;
+                    gameState = 'won';
+                }
+            }
+
+            // Update particles
+            particles.forEach((p, i) => {
+                p.update();
+                if (p.life <= 0) particles.splice(i, 1);
+            });
+        }
+
+        function draw() {
+            // Clear with gradient background
+            const bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            bgGradient.addColorStop(0, '#0a0e27');
+            bgGradient.addColorStop(1, '#1a1a2e');
+            ctx.fillStyle = bgGradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw stars in background
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            for (let i = 0; i < 50; i++) {
+                const x = (i * 137.5) % canvas.width;
+                const y = (i * 219.3) % canvas.height;
+                ctx.fillRect(x, y, 2, 2);
+            }
+
+            // Draw static platforms
+            staticPlatforms.forEach(p => {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(52, 152, 219, 0.5)';
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw moving platforms
+            movingPlatforms.forEach(p => p.draw());
+
+            // Draw spikes
+            spikes.forEach(spike => {
+                ctx.fillStyle = '#e74c3c';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(231, 76, 60, 0.8)';
+                ctx.beginPath();
+                if (currentGravity > 0) {
+                    ctx.moveTo(spike.x, spike.y + spike.height);
+                    ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
+                    ctx.lineTo(spike.x + spike.width / 2, spike.y);
+                } else {
+                    ctx.moveTo(spike.x, spike.y);
+                    ctx.lineTo(spike.x + spike.width, spike.y);
+                    ctx.lineTo(spike.x + spike.width / 2, spike.y + spike.height);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw collectibles
+            collectibles.forEach(c => c.draw());
+
+            // Draw player
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = currentGravity > 0 ? '#e74c3c' : '#4ecdc4';
+            const playerGradient = ctx.createLinearGradient(
+                player.x, player.y,
+                player.x, player.y + player.height
+            );
+            playerGradient.addColorStop(0, currentGravity > 0 ? '#e74c3c' : '#4ecdc4');
+            playerGradient.addColorStop(1, currentGravity > 0 ? '#c0392b' : '#3498db');
+            ctx.fillStyle = playerGradient;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.shadowBlur = 0;
+
+            // Draw goal
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#2ecc71';
+            const goalGradient = ctx.createRadialGradient(
+                goal.x + goal.width / 2, goal.y + goal.height / 2, 0,
+                goal.x + goal.width / 2, goal.y + goal.height / 2, goal.width / 2
+            );
+            goalGradient.addColorStop(0, '#2ecc71');
+            goalGradient.addColorStop(1, '#27ae60');
+            ctx.fillStyle = goalGradient;
+            ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
+            ctx.shadowBlur = 0;
+
+            // Draw particles
+            particles.forEach(p => p.draw());
+
+            // Draw UI
+            const fontSize = Math.floor(canvas.width / 25);
+            ctx.font = `bold ${fontSize}px 'Segoe UI'`;
+            ctx.fillStyle = '#fff';
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = '#000';
+            ctx.fillText(`Score: ${score}`, 20, 40);
+            ctx.fillText(`Items: ${collectedItems}/${collectibles.length}`, 20, 80);
+            ctx.shadowBlur = 0;
+
+            // Instructions (desktop only)
+            if (canvas.width > 600) {
+                ctx.font = `${Math.floor(fontSize * 0.7)}px 'Segoe UI'`;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.fillText('SPACE: Flip Gravity', canvas.width / 2 - 100, 30);
+                ctx.fillText('ARROWS: Move', canvas.width / 2 - 70, 55);
+            }
+
+            // Game messages
+            if (gameState === 'won') {
+                drawMessage('🎉 VICTORY! 🎉', '#2ecc71', `Score: ${score}`, 'Tap to Restart');
+            } else if (gameState === 'failed') {
+                drawMessage('💥 GAME OVER 💥', '#e74c3c', `Score: ${score}`, 'Tap to Restart');
+            } else if (collectedItems < collectibles.length) {
+                ctx.font = `${Math.floor(fontSize * 0.8)}px 'Segoe UI'`;
+                ctx.fillStyle = '#ffeb3b';
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#000';
+                const text = `Collect all items! (${collectedItems}/${collectibles.length})`;
+                ctx.fillText(text, canvas.width / 2 - ctx.measureText(text).width / 2, canvas.height - 30);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawMessage(title, color, subtitle, action) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const titleSize = Math.floor(canvas.width / 15);
+            ctx.font = `bold ${titleSize}px 'Segoe UI'`;
+            ctx.fillStyle = color;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = color;
+            ctx.fillText(title, canvas.width / 2 - ctx.measureText(title).width / 2, canvas.height / 2 - 30);
+
+            ctx.font = `${Math.floor(titleSize * 0.6)}px 'Segoe UI'`;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(subtitle, canvas.width / 2 - ctx.measureText(subtitle).width / 2, canvas.height / 2 + 20);
+            ctx.fillText(action, canvas.width / 2 - ctx.measureText(action).width / 2, canvas.height / 2 + 60);
+            ctx.shadowBlur = 0;
+        }
+
+        // Handle restart
+        canvas.addEventListener('click', () => {
+            if (gameState === 'won' || gameState === 'failed') {
+                if (gameState === 'won') score += 0;
+                resetGame();
+                gameState = 'playing';
+            }
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (gameState === 'won' || gameState === 'failed') {
+                e.preventDefault();
+                resetGame();
+                gameState = 'playing';
+            }
+        });
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>
